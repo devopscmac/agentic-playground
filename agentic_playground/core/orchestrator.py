@@ -3,11 +3,15 @@ Orchestrator for managing multiple agents and their communication.
 """
 
 import asyncio
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from collections import defaultdict
 
 from .agent import Agent
 from .message import Message, MessageType
+
+if TYPE_CHECKING:
+    from agentic_playground.memory import MemoryManager
+    from agentic_playground.memory.models import MessageType as MemMessageType
 
 
 class Orchestrator:
@@ -20,6 +24,8 @@ class Orchestrator:
         self.message_history: list[Message] = []
         self.running = False
         self._agent_tasks: list[asyncio.Task] = []
+        self.memory_manager: Optional["MemoryManager"] = None
+        self.session_id: Optional[str] = None
 
     def register_agent(self, agent: Agent) -> None:
         """Register an agent with the orchestrator."""
@@ -28,6 +34,11 @@ class Orchestrator:
 
         self.agents[agent.id] = agent
         agent.set_message_callback(self._handle_message)
+
+        # Attach memory manager if available
+        if self.memory_manager and self.session_id:
+            agent.set_memory_manager(self.memory_manager, self.session_id)
+
         print(f"Registered agent: {agent}")
 
     def unregister_agent(self, agent_id: str) -> None:
@@ -35,6 +46,111 @@ class Orchestrator:
         if agent_id in self.agents:
             del self.agents[agent_id]
             print(f"Unregistered agent: {agent_id}")
+
+    def attach_memory_manager(
+        self,
+        memory_manager: "MemoryManager",
+        session_id: Optional[str] = None
+    ) -> str:
+        """
+        Attach a memory manager to the orchestrator.
+
+        Args:
+            memory_manager: MemoryManager instance
+            session_id: Optional session ID (creates new session if not provided)
+
+        Returns:
+            The session ID
+        """
+        self.memory_manager = memory_manager
+        if session_id is None:
+            # Will be created when needed
+            self.session_id = None
+        else:
+            self.session_id = session_id
+
+        # Attach to all registered agents
+        if self.session_id:
+            for agent in self.agents.values():
+                agent.set_memory_manager(memory_manager, self.session_id)
+
+        return self.session_id or ""
+
+    async def restore_session(self, session_id: str) -> None:
+        """
+        Restore a session from memory storage.
+
+        This restores:
+        - Message history
+        - Agent states
+        - Session metadata
+
+        Args:
+            session_id: The session identifier to restore
+        """
+        if not self.memory_manager:
+            raise RuntimeError("No memory manager attached")
+
+        # Verify session exists
+        session = await self.memory_manager.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+
+        self.session_id = session_id
+
+        # Restore message history
+        from agentic_playground.memory.models import MessageType as MemMessageType
+
+        stored_messages = await self.memory_manager.get_messages(session_id)
+
+        # Convert stored messages to Message objects
+        mem_to_core_type = {
+            MemMessageType.AGENT: MessageType.RESPONSE,
+            MemMessageType.USER: MessageType.TASK,
+            MemMessageType.SYSTEM: MessageType.STATUS,
+            MemMessageType.BROADCAST: MessageType.BROADCAST,
+        }
+
+        self.message_history = [
+            Message(
+                type=mem_to_core_type.get(msg.type, MessageType.RESPONSE),
+                sender=msg.sender,
+                recipient=msg.recipient,
+                content=msg.content,
+                metadata=msg.metadata,
+            )
+            for msg in stored_messages
+        ]
+
+        # Restore agent states
+        for agent in self.agents.values():
+            agent.set_memory_manager(self.memory_manager, session_id)
+            await agent.restore_state()
+
+        print(f"Restored session {session_id} with {len(self.message_history)} messages")
+
+    async def save_session(self) -> None:
+        """
+        Save the current session state to memory storage.
+
+        This saves:
+        - All agent states
+        - Session metadata update
+        """
+        if not self.memory_manager or not self.session_id:
+            raise RuntimeError("No memory manager or session attached")
+
+        # Save all agent states
+        for agent in self.agents.values():
+            await agent.save_state()
+
+        # Update session metadata
+        await self.memory_manager.update_session_metadata(
+            self.session_id,
+            {"last_saved": asyncio.get_event_loop().time()}
+        )
+
+        print(f"Saved session {self.session_id}")
 
     async def _handle_message(self, message: Message) -> None:
         """
@@ -44,6 +160,28 @@ class Orchestrator:
         """
         self.message_history.append(message)
         print(f"\n{message}")
+
+        # Persist message if memory is enabled
+        if self.memory_manager and self.session_id:
+            from agentic_playground.memory.models import MessageType as MemMessageType
+
+            # Map MessageType to memory MessageType
+            mem_type_map = {
+                MessageType.TASK: MemMessageType.AGENT,
+                MessageType.RESPONSE: MemMessageType.AGENT,
+                MessageType.BROADCAST: MemMessageType.BROADCAST,
+                MessageType.ERROR: MemMessageType.SYSTEM,
+                MessageType.STATUS: MemMessageType.SYSTEM,
+            }
+
+            await self.memory_manager.store_message(
+                session_id=self.session_id,
+                sender=message.sender,
+                content=message.content,
+                message_type=mem_type_map.get(message.type, MemMessageType.AGENT),
+                recipient=message.recipient,
+                metadata=message.metadata,
+            )
 
         if message.type == MessageType.BROADCAST or message.recipient is None:
             # Broadcast to all agents except sender

@@ -4,10 +4,13 @@ Base agent class for the multi-agent system.
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Awaitable
+from typing import Optional, Callable, Awaitable, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from .message import Message, MessageType
+
+if TYPE_CHECKING:
+    from agentic_playground.memory import MemoryManager
 
 
 class AgentConfig(BaseModel):
@@ -39,6 +42,8 @@ class Agent(ABC):
         self.running = False
         self.message_callback: Optional[Callable[[Message], Awaitable[None]]] = None
         self._state: dict = {}
+        self.memory_manager: Optional["MemoryManager"] = None
+        self.session_id: Optional[str] = None
 
     @property
     def state(self) -> dict:
@@ -50,6 +55,52 @@ class Agent(ABC):
     ) -> None:
         """Set callback for sending messages (typically set by orchestrator)."""
         self.message_callback = callback
+
+    def set_memory_manager(
+        self, memory_manager: "MemoryManager", session_id: str
+    ) -> None:
+        """
+        Set the memory manager for this agent.
+
+        Args:
+            memory_manager: MemoryManager instance
+            session_id: Session identifier
+        """
+        self.memory_manager = memory_manager
+        self.session_id = session_id
+
+        # Initialize query engine for LLMAgent subclass
+        if hasattr(self, 'enable_memory_retrieval') and self.enable_memory_retrieval:
+            from agentic_playground.memory.query import QueryEngine, MemoryRetriever
+            self.query_engine = QueryEngine(memory_manager)
+            self.memory_retriever = MemoryRetriever(self.query_engine)
+
+    async def save_state(self) -> None:
+        """
+        Save agent state to memory storage.
+
+        Only saves if memory manager is attached.
+        """
+        if self.memory_manager and self.session_id:
+            await self.memory_manager.save_agent_state(
+                agent_id=self.id,
+                session_id=self.session_id,
+                state_data=self._state
+            )
+
+    async def restore_state(self) -> None:
+        """
+        Restore agent state from memory storage.
+
+        Only restores if memory manager is attached.
+        """
+        if self.memory_manager and self.session_id:
+            state_data = await self.memory_manager.load_agent_state(
+                agent_id=self.id,
+                session_id=self.session_id
+            )
+            if state_data:
+                self._state = state_data
 
     async def send_message(self, message: Message) -> None:
         """Send a message through the orchestrator."""
