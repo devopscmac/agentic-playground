@@ -8,6 +8,7 @@ A flexible, extensible multi-agent system framework for experimenting with AI ag
 - **Message-Based Communication**: Robust message passing system with different message types
 - **LLM Integration**: Support for multiple LLM providers (Anthropic Claude, OpenAI GPT)
 - **Orchestration**: Built-in orchestrator for managing agent lifecycles and message routing
+- **Web UI**: Beautiful Gradio-based interface for managing agents and viewing interactions
 - **Async/Await**: Full async support for efficient concurrent agent operations
 - **Extensible**: Easy to extend with new agent types and capabilities
 
@@ -62,7 +63,21 @@ cp .env.example .env
 
 ## Quick Start
 
-### Basic Agent Communication
+### Web UI (Easiest!)
+
+The fastest way to get started is with the web interface:
+
+```bash
+# Install web UI dependencies
+uv sync --extra webui
+
+# Launch with pre-configured agents
+uv run python -m agentic_playground.examples.webui_quickstart
+```
+
+The interface will open in your browser with agents ready to use! See [WEBUI_GUIDE.md](WEBUI_GUIDE.md) for full documentation.
+
+### Basic Agent Communication (Python)
 
 ```python
 import asyncio
@@ -150,6 +165,16 @@ class CustomAgent(Agent):
 ## Examples
 
 Run the example scripts to see the framework in action:
+
+### Web UI (Interactive)
+```bash
+# Quick start with pre-configured agents
+uv run python -m agentic_playground.examples.webui_quickstart
+
+# Or empty playground
+uv run python -m agentic_playground.examples.webui_demo
+```
+Interactive web interface for managing agents and conversations. See [WEBUI_GUIDE.md](WEBUI_GUIDE.md).
 
 ### Simple Conversation
 ```bash
@@ -266,9 +291,9 @@ ruff check agentic_playground/
 
 ## Future Enhancements
 
+- [x] **Web UI for visualizing agent interactions** - [See WEBUI_GUIDE.md](WEBUI_GUIDE.md)
 - [ ] Tool/function calling support for agents
 - [ ] Persistent conversation history (database integration)
-- [ ] Web UI for visualizing agent interactions
 - [ ] More example agents (research, coding, creative writing)
 - [ ] Support for local LLMs (Ollama integration)
 - [ ] Agent memory and context management

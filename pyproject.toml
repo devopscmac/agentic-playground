@@ -23,6 +23,11 @@ dev = [
     "black>=24.0.0",
     "ruff>=0.1.0",
 ]
+webui = [
+    "gradio>=4.0.0",
+    "plotly>=5.0.0",
+    "pandas>=2.0.0",
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]
