@@ -29,6 +29,9 @@ class AgenticWebUI:
         self.orchestrator = Orchestrator()
         self.chat_history: List[Tuple[str, str]] = []
         self.orchestrator_task: Optional[asyncio.Task] = None
+        self.memory_manager = None
+        self.storage = None
+        self.current_session_id = None
 
     def create_interface(self) -> gr.Blocks:
         """Create the Gradio interface."""
@@ -50,7 +53,11 @@ class AgenticWebUI:
                 with gr.Tab("📜 Message History"):
                     self._create_history_tab()
 
-                # Tab 4: Visualization
+                # Tab 4: Memory Settings
+                with gr.Tab("🧠 Memory Settings"):
+                    self._create_memory_tab()
+
+                # Tab 5: Visualization
                 with gr.Tab("📊 Visualization"):
                     self._create_visualization_tab()
 
@@ -380,6 +387,357 @@ class AgenticWebUI:
             inputs=[filter_agent, filter_type],
             outputs=[history_display, stats_display]
         )
+
+    def _create_memory_tab(self):
+        """Create the memory settings interface tab."""
+        gr.Markdown("### Configure persistent memory and session management")
+
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown("#### Memory Settings")
+
+                memory_enabled = gr.Checkbox(
+                    label="Enable Persistent Memory",
+                    value=False,
+                    info="Store conversation history and agent states"
+                )
+
+                storage_path = gr.Textbox(
+                    label="Storage Path",
+                    value="./data/sessions.db",
+                    placeholder="Path to SQLite database file"
+                )
+
+                with gr.Row():
+                    enable_btn = gr.Button("Enable Memory", variant="primary")
+                    disable_btn = gr.Button("Disable Memory")
+
+                memory_status = gr.Textbox(
+                    label="Memory Status",
+                    value="Memory is disabled",
+                    interactive=False
+                )
+
+                gr.Markdown("---")
+                gr.Markdown("#### Session Management")
+
+                session_info = gr.Markdown("**Current Session:** None")
+
+                session_dropdown = gr.Dropdown(
+                    label="Available Sessions",
+                    choices=[],
+                    value=None,
+                    interactive=True
+                )
+
+                with gr.Row():
+                    new_session_btn = gr.Button("New Session", variant="primary")
+                    load_session_btn = gr.Button("Load Session")
+                    refresh_sessions_btn = gr.Button("Refresh")
+
+                with gr.Row():
+                    save_session_btn = gr.Button("Save Current Session")
+                    delete_session_btn = gr.Button("Delete Session", variant="stop")
+
+                session_status = gr.Textbox(
+                    label="Session Status",
+                    interactive=False
+                )
+
+            with gr.Column():
+                gr.Markdown("#### Session Details")
+
+                session_details = gr.Dataframe(
+                    headers=["Session ID", "Created", "Last Active", "Messages"],
+                    interactive=False,
+                    wrap=True
+                )
+
+                gr.Markdown("#### Memory Statistics")
+
+                memory_stats = gr.Markdown("Enable memory to see statistics")
+
+        def enable_memory(path: str):
+            """Enable memory system."""
+            try:
+                from agentic_playground.memory import MemoryManager, SQLiteStorage
+
+                # Initialize storage
+                self.storage = SQLiteStorage(path)
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self.storage.initialize())
+                loop.close()
+
+                # Create memory manager
+                self.memory_manager = MemoryManager(self.storage)
+
+                return (
+                    True,
+                    f"✓ Memory enabled at {path}",
+                    self._get_session_info(),
+                    self._get_session_choices(),
+                    self._get_session_details(),
+                    self._get_memory_stats()
+                )
+
+            except Exception as e:
+                return (
+                    False,
+                    f"Error enabling memory: {str(e)}",
+                    "**Current Session:** None",
+                    [],
+                    [],
+                    "Error loading statistics"
+                )
+
+        def disable_memory():
+            """Disable memory system."""
+            try:
+                if self.storage:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(self.storage.close())
+                    loop.close()
+
+                self.storage = None
+                self.memory_manager = None
+                self.current_session_id = None
+
+                return (
+                    False,
+                    "Memory disabled",
+                    "**Current Session:** None",
+                    [],
+                    [],
+                    "Memory is disabled"
+                )
+
+            except Exception as e:
+                return (
+                    False,
+                    f"Error disabling memory: {str(e)}",
+                    "**Current Session:** None",
+                    [],
+                    [],
+                    "Error"
+                )
+
+        def create_new_session():
+            """Create a new session."""
+            try:
+                if not self.memory_manager:
+                    return "Error: Memory is not enabled", self._get_session_info(), [], [], ""
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                session_id = loop.run_until_complete(
+                    self.memory_manager.create_session(metadata={"created_via": "webui"})
+                )
+                loop.close()
+
+                # Attach to orchestrator
+                self.current_session_id = session_id
+                self.orchestrator.attach_memory_manager(self.memory_manager, session_id)
+
+                return (
+                    f"✓ Created session: {session_id[:8]}...",
+                    self._get_session_info(),
+                    self._get_session_choices(),
+                    self._get_session_details(),
+                    self._get_memory_stats()
+                )
+
+            except Exception as e:
+                return f"Error: {str(e)}", self._get_session_info(), [], [], ""
+
+        def load_session(session_id: str):
+            """Load an existing session."""
+            try:
+                if not self.memory_manager or not session_id:
+                    return "Error: Memory not enabled or no session selected", self._get_session_info(), []
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                # Restore session
+                loop.run_until_complete(self.orchestrator.restore_session(session_id))
+                self.current_session_id = session_id
+
+                loop.close()
+
+                return (
+                    f"✓ Loaded session: {session_id[:8]}...",
+                    self._get_session_info(),
+                    self._get_memory_stats()
+                )
+
+            except Exception as e:
+                return f"Error: {str(e)}", self._get_session_info(), ""
+
+        def save_current_session():
+            """Save the current session."""
+            try:
+                if not self.memory_manager or not self.current_session_id:
+                    return "Error: No active session", self._get_memory_stats()
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self.orchestrator.save_session())
+                loop.close()
+
+                return f"✓ Session saved", self._get_memory_stats()
+
+            except Exception as e:
+                return f"Error: {str(e)}", ""
+
+        def delete_session(session_id: str):
+            """Delete a session."""
+            try:
+                if not self.memory_manager or not session_id:
+                    return "Error: No session selected", [], [], ""
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self.memory_manager.delete_session(session_id))
+                loop.close()
+
+                if session_id == self.current_session_id:
+                    self.current_session_id = None
+
+                return (
+                    f"✓ Deleted session: {session_id[:8]}...",
+                    self._get_session_choices(),
+                    self._get_session_details(),
+                    self._get_memory_stats()
+                )
+
+            except Exception as e:
+                return f"Error: {str(e)}", [], [], ""
+
+        def refresh_sessions():
+            """Refresh session list."""
+            return (
+                self._get_session_choices(),
+                self._get_session_details()
+            )
+
+        # Event handlers
+        enable_btn.click(
+            enable_memory,
+            inputs=[storage_path],
+            outputs=[memory_enabled, memory_status, session_info, session_dropdown,
+                    session_details, memory_stats]
+        )
+
+        disable_btn.click(
+            disable_memory,
+            outputs=[memory_enabled, memory_status, session_info, session_dropdown,
+                    session_details, memory_stats]
+        )
+
+        new_session_btn.click(
+            create_new_session,
+            outputs=[session_status, session_info, session_dropdown, session_details, memory_stats]
+        )
+
+        load_session_btn.click(
+            load_session,
+            inputs=[session_dropdown],
+            outputs=[session_status, session_info, memory_stats]
+        )
+
+        save_session_btn.click(
+            save_current_session,
+            outputs=[session_status, memory_stats]
+        )
+
+        delete_session_btn.click(
+            delete_session,
+            inputs=[session_dropdown],
+            outputs=[session_status, session_dropdown, session_details, memory_stats]
+        )
+
+        refresh_sessions_btn.click(
+            refresh_sessions,
+            outputs=[session_dropdown, session_details]
+        )
+
+    def _get_session_info(self) -> str:
+        """Get current session information."""
+        if not self.current_session_id:
+            return "**Current Session:** None"
+        return f"**Current Session:** {self.current_session_id[:8]}..."
+
+    def _get_session_choices(self) -> List[str]:
+        """Get list of available sessions."""
+        if not self.memory_manager:
+            return []
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            sessions = loop.run_until_complete(
+                self.memory_manager.list_sessions(limit=50)
+            )
+            loop.close()
+            return [s.session_id for s in sessions]
+        except:
+            return []
+
+    def _get_session_details(self) -> List[List[str]]:
+        """Get session details for dataframe."""
+        if not self.memory_manager:
+            return []
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            sessions = loop.run_until_complete(
+                self.memory_manager.list_sessions(limit=20)
+            )
+            loop.close()
+
+            data = []
+            for session in sessions:
+                msg_count_task = loop.run_until_complete(
+                    self.memory_manager.get_message_count(session.session_id)
+                )
+                data.append([
+                    session.session_id[:12] + "...",
+                    session.created_at.strftime("%Y-%m-%d %H:%M"),
+                    session.last_active.strftime("%Y-%m-%d %H:%M"),
+                    str(msg_count_task)
+                ])
+
+            return data
+        except Exception as e:
+            return [[f"Error: {str(e)}", "", "", ""]]
+
+    def _get_memory_stats(self) -> str:
+        """Get memory statistics."""
+        if not self.memory_manager or not self.current_session_id:
+            return "No active session"
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            summary = loop.run_until_complete(
+                self.memory_manager.get_session_summary(self.current_session_id)
+            )
+            loop.close()
+
+            if not summary:
+                return "Session not found"
+
+            return f"""#### Session Statistics
+- **Session ID:** {summary['session_id'][:12]}...
+- **Created:** {summary['created_at'].strftime("%Y-%m-%d %H:%M:%S")}
+- **Last Active:** {summary['last_active'].strftime("%Y-%m-%d %H:%M:%S")}
+- **Total Messages:** {summary['message_count']}
+"""
+        except Exception as e:
+            return f"Error: {str(e)}"
 
     def _create_visualization_tab(self):
         """Create the agent interaction visualization tab."""
