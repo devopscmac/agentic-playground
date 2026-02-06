@@ -1,5 +1,11 @@
 # Agentic Playground
 
+[![Tests](https://github.com/devopscmac/agentic-playground/actions/workflows/tests.yml/badge.svg)](https://github.com/devopscmac/agentic-playground/actions/workflows/tests.yml)
+[![Code Quality](https://github.com/devopscmac/agentic-playground/actions/workflows/code-quality.yml/badge.svg)](https://github.com/devopscmac/agentic-playground/actions/workflows/code-quality.yml)
+[![codecov](https://codecov.io/gh/devopscmac/agentic-playground/branch/main/graph/badge.svg)](https://codecov.io/gh/devopscmac/agentic-playground)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A flexible, extensible multi-agent system framework for experimenting with AI agents. Build intelligent agents that can communicate, coordinate, and collaborate using LLMs.
 
 ## Features
@@ -279,15 +285,45 @@ queries = orchestrator.get_message_history(message_type=MessageType.QUERY)
 ### Running Tests
 
 ```bash
-pytest tests/
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ --cov=agentic_playground --cov-report=term-missing
+
+# Run specific test file
+pytest tests/test_memory.py -v
+
+# Run tests for a specific module
+pytest tests/ -k "memory" -v
 ```
 
 ### Code Formatting
 
 ```bash
-black agentic_playground/
-ruff check agentic_playground/
+# Format code
+black agentic_playground/ tests/
+
+# Check formatting
+black --check agentic_playground/ tests/
+
+# Lint with ruff
+ruff check agentic_playground/ tests/
+
+# Type checking
+mypy agentic_playground/ --ignore-missing-imports
 ```
+
+### Continuous Integration
+
+This project uses GitHub Actions for CI/CD:
+
+- **Tests**: Runs on Python 3.10, 3.11, 3.12 across Ubuntu, macOS, and Windows
+- **Code Quality**: Linting, formatting checks, and type checking
+- **Coverage**: Code coverage reporting with Codecov
+- **PR Validation**: Automated checks on pull requests
+
+See [`.github/workflows/`](.github/workflows/) for workflow details.
 
 ## Future Enhancements
 
